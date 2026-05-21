@@ -1,0 +1,11 @@
+name: Chore
+description: Maintenance, configuration, refactoring, CI/CD
+labels: ["chore"]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      placeholder: What needs to be done and why?
+    validations:
+      required: true
