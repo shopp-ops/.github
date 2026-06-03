@@ -6,7 +6,7 @@ The local development environment is split into two layers:
 
 **Kind cluster** — runs in Docker and acts as the local Kubernetes environment. It hosts the infrastructure that applications depend on: the PostgreSQL operator (CNPG), the NGINX ingress controller, and the Shop operator. Once set up, this cluster stays running in the background.
 
-**Shop and ShopHub applications** — can be run directly on local machine. They connect to the cluster over port-forward for database access, and talk to the cluster API directly to deploy Shop instances. 
+**Shop and ShopHub applications** — run directly on your local machine. They connect to the cluster over port-forward for database access, and talk to the cluster API directly to deploy Shop instances.
 
 **In production**, the cluster is permanent and managed through GitOps — Flux watches the `kube-state` repository and automatically applies any changes to the cluster. Applications are deployed as Docker images built and published by the CI/CD pipeline.
 
@@ -74,13 +74,16 @@ kubectl get nodes
 
 ## 3. Install Cluster Infrastructure
 
-This installs the CNPG operator (PostgreSQL), NGINX ingress controller, and the Shop operator into the cluster. These are installed once and stay running.
+This installs the CNPG operator (PostgreSQL), NGINX ingress controller, and the Shop operator CRDs into the cluster. These are installed once and stay running.
 
 ```bash
-helm upgrade --install shoppops-infra ./charts/shoppops-infra --create-namespace
+helm dependency update charts/shoppops-infra
+helm upgrade --install shoppops-infra ./charts/shoppops-infra \
+  --namespace shoppops-infra \
+  --create-namespace
 ```
 
-Wait for CRDs to be registered before proceeding:
+Wait for the CNPG operator to be ready before proceeding:
 
 ```bash
 kubectl wait --for=condition=established \
@@ -96,13 +99,13 @@ kubectl get pods -A
 
 ---
 
-## 4. Deploy Application Dependencies
+## 4. Deploy ShopHub Database
 
 Create a local values override file — this is gitignored and never committed:
 
 ```bash
 cp charts/shophub/values.local.example.yaml charts/shophub/values.local.yaml
-# edit values.local.yaml with your local credentials
+# Edit values.local.yaml and set database.password
 ```
 
 Deploy ShopHub's PostgreSQL instance into the cluster:
@@ -120,33 +123,58 @@ helm upgrade --install shophub ./charts/shophub \
 
 ### ShopHub
 
-Port-forward the database so the app can reach it:
+Port-forward the database so the API can reach it:
 
 ```bash
 kubectl port-forward svc/shophub-db-rw 5432:5432 -n shophub
 ```
 
-In a separate terminal, start the app:
+In a new terminal, start the API:
 
 ```bash
-cd shophub
-cp .env.example .env.local
-# edit .env.local — DATABASE_URL should point to localhost:5432
+cd shophub/api
+cp .env.example .env
+# Edit .env — set DATABASE_URL=postgresql://shophub:<password>@localhost:5432/shophub
 npm install
-npm run dev
+npm run start:dev     # http://localhost:3000
 ```
 
-ShopHub will connect to the database in the cluster and use the local kubeconfig to deploy Shop instances when users create stores through the UI.
+In another terminal, start the web app:
+
+```bash
+cd shophub/web
+cp .env.example .env.local
+# Edit .env.local if needed
+npm install
+npm run dev           # http://localhost:3001
+```
 
 ### Shop
 
-Shop does not depend on the cluster during development. Run it standalone:
+Shop uses a local Docker Compose database — no cluster needed:
 
 ```bash
 cd shop
+docker compose up -d
+```
+
+In a new terminal, start the API:
+
+```bash
+cd shop/api
+cp .env.example .env
+# Edit .env — set ADMIN_EMAIL, ADMIN_PASSWORD, WALLET_ADDRESS
+npm install
+npm run start:dev     # http://localhost:3000
+```
+
+In another terminal, start the web app:
+
+```bash
+cd shop/web
 cp .env.example .env.local
 npm install
-npm run dev
+npm run dev           # http://localhost:3001
 ```
 
 ---
@@ -154,6 +182,12 @@ npm run dev
 ## Useful Commands
 
 ```bash
+# Stop the cluster without deleting it
+docker stop shoppops-control-plane
+
+# Start it again
+docker start shoppops-control-plane
+
 # Delete and recreate the cluster from scratch
 kind delete cluster --name shoppops
 kind create cluster --config kind-config.yaml
